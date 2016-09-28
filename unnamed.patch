@@ -1,0 +1,579 @@
+Index: davetrader.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- davetrader.py	(revision )
++++ davetrader.py	(revision )
+@@ -0,0 +1,351 @@
++# -*-coding: utf-8 -*-
++import sqlite3
++import sys
++from datetime import date
++from PyQt4.QtGui import *
++from PyQt4.QtCore import *
++from PyQt4 import uic
++from pytrader import *
++from Kiwoom import *
++
++class SingletonInstance:
++  __instance = None
++
++  @classmethod
++  def __getInstance(cls):
++    return cls.__instance
++
++  @classmethod
++  def instance(cls, *args, **kargs):
++    cls.__instance = cls(*args, **kargs)
++    cls.instance = cls.__getInstance
++    return cls.__instance
++
++class DaveMain(QMainWindow, SingletonInstance):
++
++    def execute_main(self):
++        self.kiwoom_func_set = Kiwoom()
++        self.dave_view = DaveView()
++        self.set_conn()
++        self.dave_view.show()
++        self.set_account()
++        self.load_selected_list()
++        self.dave_view.set_signal_connection()
++
++    def set_conn(self):
++        self.kiwoom_func_set.CommConnect()
++        self.conn_timer = QTimer(self)
++        self.conn_timer.start(1000)
++        self.conn_timer.timeout.connect(self.check_connection)
++
++    def check_connection(self):
++        current_time = QTime.currentTime()
++        text_time = current_time.toString("hh:mm:ss")
++        time_msg = "현재시간: " + text_time
++        if self.kiwoom_func_set.GetConnectState() == 1:
++            state_msg = "서버 연결 중"
++        else:
++            state_msg = "서버 미 연결 중"
++        self.dave_view.update_statusbar_message(state_msg + " | " + time_msg)
++
++    def set_account(self):
++        accounts_num = int(self.kiwoom_func_set.GetLoginInfo("ACCOUNT_CNT"))
++        accounts = self.kiwoom_func_set.GetLoginInfo("ACCNO")
++        accounts_list = accounts.split(';')[0:accounts_num]
++        self.dave_view.update_combobox_accounts(accounts_list)
++
++    def load_selected_list(self):
++        row_list = self.select_all_db()
++        self.dave_view.update_selected_list(row_list)
++        self.set_current_price(row_list)
++        self.dave_view.RequestTable.resizeRowsToContents()
++
++    def set_current_price(self, row_list):
++        for j, ListRecords in enumerate(row_list):
++            self.set_price(ListRecords[1], ListRecords[2], j)
++
++    def conn_db(self):
++        conn_database = sqlite3.connect("davedb.db")
++        conn_database.isolation_level = None
++        return conn_database.cursor()
++
++    def select_all_db(self):
++        db_cursor = self.conn_db()
++        db_cursor.execute("SELECT * FROM DaveDBTable")
++        return db_cursor.fetchall()
++
++    def insert_db(self, row_num):
++        db_cursor = self.conn_db()
++        db_query = "INSERT INTO DaveDBTable VALUES("
++        for col_num in range(0, 15):
++            if col_num is not 2:
++                db_query = db_query + "'" + self.dave_view.RequestTable.item(row_num, col_num).text() + "',"
++        db_query += "'');"
++        try:
++            db_cursor.execute(db_query)
++        except sqlite3.IntegrityError:
++            return False
++        return True
++
++    def update_db(self, row_num):
++        if self.dave_view.RequestTable.item(row_num, 1) is None or self.dave_view.RequestTable.item(row_num, 1).text() == "":
++            self.dave_view.show_message_box(self, "알림", "종목코드가 입력되지 않았습니다.")
++            return
++        if self.dave_view.RequestTable.item(row_num, 3) is None or self.dave_view.RequestTable.item(row_num, 3).text() == "":
++            self.dave_view.show_message_box(self, "알림", "희망매수가격이 입력되지 않았습니다.")
++            return
++
++        davedb_cursor = self.conn_db("davedb.db")
++        davedb_query = "UPDATE DaveDBTable SET FirstBuyPrice = " + self.dave_view.RequestTable.item(row_num, 3).text() + ", "
++        davedb_query += "FirstBuyNum = " + self.dave_view.RequestTable.item(row_num, 4).text() + ", "
++        davedb_query += "SecondBuyPrice = " + self.dave_view.RequestTable.item(row_num, 5).text() + ", "
++        davedb_query += "SecondBuyNum = " + self.dave_view.RequestTable.item(row_num, 6).text() + ", "
++        davedb_query += "ThirdBuyPrice = " + self.dave_view.RequestTable.item(row_num, 7).text() + ", "
++        davedb_query += "ThirdBuyNum = " + self.dave_view.RequestTable.item(row_num, 8).text() + ", "
++        davedb_query += "FourthBuyPrice = " + self.dave_view.RequestTable.item(row_num, 9).text() + ", "
++        davedb_query += "FourthBuyNum = " + self.dave_view.RequestTable.item(row_num, 10).text() + ", "
++        davedb_query += "FirstSellPrice = " + self.dave_view.RequestTable.item(row_num, 11).text() + ", "
++        davedb_query += "FirstSellNum = " + self.dave_view.RequestTable.item(row_num, 12).text() + ", "
++        davedb_query += "SecondSellPrice = " + self.dave_view.RequestTable.item(row_num, 13).text() + ", "
++        davedb_query += "SecondSellNum = " + self.dave_view.RequestTable.item(row_num, 14).text() + " "
++        davedb_query += "WHERE StockCode= " + self.dave_view.RequestTable.item(row_num, 1).text()
++        try:
++            davedb_cursor.execute(davedb_query)
++        except sqlite3.IntegrityError:
++            self.dave_view.show_message_box("알림", "동일한 종목코드가 존재합니다.")
++            return
++
++    def update_db_order_date(self, code):
++        davedb_cursor = self.conn_db("davedb.db")
++        davedb_update_sql = "UPDATE DaveDBTable SET OrderDate = ? WHERE StockCode= ?"
++        davedb_cursor.execute(davedb_update_sql, (date.today(), code))
++
++    def request_get_code_details(self, code_num):
++        self.kiwoom_func_set.SetInputValue("종목코드", code_num)
++        self.kiwoom_func_set.CommRqData("주식기본정보", "OPT10001", 0, "0101")
++
++    def request_get_estimated_balance(self):
++        self.kiwoom_func_set.SetInputValue("계좌번호", "8082829111")
++        self.kiwoom_func_set.SetInputValue("비밀번호", "0000")
++        self.kiwoom_func_set.CommRqData("opw00001_req", "opw00001", 0, "2000")
++
++    def request_get_hold_list(self):
++        self.kiwoom_func_set.init_opw00018_data()
++        self.kiwoom_func_set.SetInputValue("계좌번호", "8082829111")
++        self.kiwoom_func_set.SetInputValue("비밀번호", "0000")
++        self.kiwoom_func_set.CommRqData("opw00018_req", "opw00018", 0, "2000")
++
++    def request_execute_order(self, code, price, volume, order_type, order_num):
++        time.sleep(0.2)
++        if volume > 0:
++            account = self.dave_view.comboBox.currentText()
++            ret = self.kiwoom_func_set.SendOrder("주식주문", "0101", account, order_type, code, volume, price, "00", "")
++            print(ret)
++
++    def request_get_ordered_list(self):
++        self.kiwoom_func_set.SetInputValue("계좌번호", "8082829111")
++        self.kiwoom_func_set.SetInputValue("체결구분", "0")
++        self.kiwoom_func_set.SetInputValue("매매구분", "0")
++        self.kiwoom_func_set.CommRqData("실시간미체결", "opt10075", 0, "2000")
++
++    def update_order_plan_details(self, row, col):
++        if self.dave_view.RequestTable.item(row, col).text().isnumeric() and int(self.dave_view.RequestTable.item(row, col).text()) > 0:
++            self.dave_view.RequestTable.blockSignals(True)
++            self.dave_view.set_column_item(self.dave_view.RequestTable, self.dave_view.RequestTable.item(row, col).text(), row, col, False, False, "")
++            self.dave_view.RequestTable.blockSignals(False)
++            self.update_db(row)
++            return
++        else:
++            self.dave_view.RequestTable.blockSignals(True)
++            self.dave_view.set_column_item(self.dave_view.RequestTable, "", row, col, False, False, "")
++            self.dave_view.RequestTable.blockSignals(False)
++            self.dave_view.show_message_box("알림", "숫자로 입력하세요.")
++            return
++
++    def add_code_name(self, row, col):
++        if len(self.dave_view.RequestTable.item(row, col).text()) == 6 and self.dave_view.RequestTable.item(row,
++                                                                                        col).text().isnumeric():
++            code_name = self.kiwoom_func_set.GetMasterCodeName(self.dave_view.RequestTable.item(row, col).text())
++            if code_name != "":
++                self.dave_view.RequestTable.blockSignals(True)
++                self.dave_view.update_code_name(code_name, row)
++                self.set_price(self.dave_view.RequestTable.item(row, col).text(), 0, row)
++                self.dave_view.RequestTable.blockSignals(False)
++            else:
++                self.dave_view.RequestTable.blockSignals(True)
++                self.dave_view.set_column_item(self.dave_view.RequestTable, "", row, col, False, False, "")
++                self.dave_view.RequestTable.blockSignals(False)
++                self.dave_view.show_message_box("알림", "입력한 종목코드는 유효하지 않습니다.")
++        elif len(self.dave_view.RequestTable.item(row, col).text()) == 0:
++            return
++        else:
++            self.dave_view.RequestTable.blockSignals(True)
++            self.dave_view.set_column_item(self.dave_view.RequestTable, "", row, col, False, False, "")
++            self.dave_view.RequestTable.blockSignals(False)
++            self.dave_view.show_message_box("알림", "종목코드는 6자리 숫자값입니다.")
++
++    def add_price(self, row, col):
++        if self.dave_view.RequestTable.item(row, col).text().isnumeric() and int(self.dave_view.RequestTable.item(row, col).text()) > 0:
++            self.dave_view.RequestTable.blockSignals(True)
++            self.set_price(self.dave_view.RequestTable.item(row, 1).text(), self.dave_view.RequestTable.item(row, col).text(), row)
++            self.update_db(row)
++            self.dave_view.RequestTable.blockSignals(False)
++        elif len(self.dave_view.RequestTable.item(row, 4).text()) == 0:
++            return
++        else:
++            self.dave_view.set_column_item(self.dave_view.RequestTable, "", row, col, False, False, "")
++            self.dave_view.show_message_box("알림", "매수희망가격은 숫자입니다.")
++
++    def set_price(self, code_num, expected_price, row_num):
++        self.request_get_code_details(code_num)
++        curr_price = self.kiwoom_func_set.basic_info_code[0].lstrip("+- ")
++        diff_price = int(curr_price) - int(expected_price)
++
++        if diff_price == 0:
++            self.dave_view.set_column_item(self.dave_view.RequestTable, curr_price + "(0)", row_num, 2, True, True, "")
++        elif diff_price > 0:
++            self.dave_view.set_column_item(self.dave_view.RequestTable, curr_price + "(+" + str(diff_price) + ")", row_num, 2, True, True,
++                                 '#F44336')
++        else:
++            self.dave_view.set_column_item(self.dave_view.RequestTable, curr_price + "(" + str(diff_price) + ")", row_num, 2, True, True,
++                                 '#2196F3')
++        self.set_expected_price(code_num, expected_price, row_num)
++
++    def set_expected_price(self, code_num, expected_price_str, row_num):
++        expected_price = int(expected_price_str)
++        buy_rule_amount = [1000000, 1000000, 2000000, 4000000]
++        buy_rule_rate = [0, 20, 40, 60]
++        sell_rule_amount_rate = [50, 50]
++        sell_rule_rate = [10, 20]
++
++        if expected_price == 0:
++            for col_num in range(2, 14):
++                self.dave_view.set_column_item(self.dave_view.RequestTable, "", row_num, col_num + 1, False, False, "")
++        else:
++            # set buying plan
++            for buy_rule_num in range(0, 4):
++                self.dave_view.set_column_item(self.dave_view.RequestTable,
++                                     str(int(expected_price - (expected_price * buy_rule_rate[buy_rule_num] / 100))),
++                                     row_num, (buy_rule_num * 2) + 3, False, False, "")
++                self.dave_view.set_column_item(self.dave_view.RequestTable, str(int(buy_rule_amount[buy_rule_num] / (
++                expected_price - (expected_price * buy_rule_rate[buy_rule_num]) / 100))), row_num,
++                                     (buy_rule_num * 2) + 4, False, False, "")
++            # set selling plan
++            for sell_rule_num in range(0, 2):
++                self.dave_view.set_column_item(self.dave_view.RequestTable,
++                                     str(int(expected_price + (expected_price * sell_rule_rate[sell_rule_num] / 100))),
++                                     row_num, (sell_rule_num * 2) + 11, False, False, "")
++                self.dave_view.set_column_item(self.dave_view.RequestTable, str(str(int(sell_rule_amount_rate[sell_rule_num] * 100 / 100))),
++                                     row_num, (sell_rule_num * 2) + 12, False, False, "")
++
++    def execute_order(self, row_list):
++        self.request_get_hold_list()
++        item_count = len(self.kiwoom_func_set.data_opw00018['multi'])
++        list_record_order = False
++        for i, ListRecords in enumerate(row_list):
++            for j in range(item_count):
++                row = self.kiwoom_func_set.data_opw00018['multi'][j]
++                list_record_order = False
++                if ListRecords[1] == row[1].lstrip("A "):
++                    list_record_order = True
++                    self.make_order_by_plan(int(row[2]), ListRecords)
++            if list_record_order is False:
++                self.make_order_by_plan(0, ListRecords)
++
++    def make_order_by_plan(self, curr_hold_volume, plan_data):
++        if str(plan_data[14]).strip() != str(date.today()).strip():
++            order_volume = [0, 0, 0, 0]
++            hold_volume = curr_hold_volume
++            for i in range(0, 4):
++                if hold_volume > 0:
++                    order_volume[i] = plan_data[i * 2 + 3] - hold_volume
++                    hold_volume = hold_volume - plan_data[i * 2 + 3]
++                else:
++                    order_volume[i] = plan_data[i * 2 + 3]
++                self.request_execute_order(plan_data[1], plan_data[i * 2 + 2], order_volume[i], 1, "")
++
++            self.request_execute_order(plan_data[1], plan_data[10], int(curr_hold_volume * plan_data[11] / 100), 2, "")
++            self.request_execute_order(plan_data[1], plan_data[12], int(curr_hold_volume * plan_data[13] / 100), 2, "")
++            self.update_db_order_date(plan_data[1])
++
++    def handle_button_remove_clicked(self, button):
++        index = self.dave_view.RequestTable.indexAt(button.pos())
++        davedb_cursor = self.conn_db()
++        davedb_cursor.execute("DELETE FROM DaveDBTable WHERE StockCode=?",
++                              (self.dave_view.RequestTable.item(index.row(), 1).text(),))
++        self.dave_view.RequestTable.removeRow(index.row())
++
++
++    def handle_button_execute_order_clicked(self, button):
++        index = self.dave_view.RequestTable.indexAt(button.pos())
++        davedb_cursor = self.conn_db()
++        davedb_cursor.execute("SELECT * FROM DaveDBTable WHERE StockCode=?",
++                              (self.dave_view.RequestTable.item(index.row(), 1).text(),))
++        row_list = davedb_cursor.fetchall()
++        self.execute_order(row_list)
++
++    def handle_button_cancel_order_clicked(self, button):
++        index = self.dave_view.OrderTable.indexAt(button.pos())
++        self.request_execute_order(self.dave_view.OrderTable.item(index.row(), 1).text(),
++                                   int(self.dave_view.OrderTable.item(index.row(), 2).text()),
++                                   int(self.dave_view.OrderTable.item(index.row(), 4).text()), 3,
++                                   int(self.dave_view.OrderTable.item(index.row(), 5).text()))
++
++
++    def handle_button_add_clicked(self):
++        row_count = self.dave_view.RequestTable.rowCount() - 1
++        if self.dave_view.RequestTable.item(row_count, 1) is None or self.dave_view.RequestTable.item(row_count,
++                                                                                                      1).text() == "":
++            self.dave_view.show_message_box("알림", "종목코드가 입력되지 않았습니다.")
++            return
++        if self.dave_view.RequestTable.item(row_count, 3) is None or self.dave_view.RequestTable.item(row_count,
++                                                                                                      3).text() == "":
++            self.dave_view.show_message_box("알림", "희망매수가격이 입력되지 않았습니다.")
++            return
++
++        if (self.insert_db(row_count)):
++            self.dave_view.RequestTable.blockSignals(True)
++            self.load_selected_list()
++            self.dave_view.RequestTable.blockSignals(False)
++        else:
++            self.dave_view.show_message_box("알림", "동일한 종목코드가 존재합니다.")
++
++    def handle_button_check_balance(self):
++        self.request_get_hold_list()
++        self.request_get_estimated_balance()
++        self.dave_view.update_estimated_balance_item(self.kiwoom_func_set.data_opw00001)
++        self.dave_view.update_balance_details_item(self.kiwoom_func_set.data_opw00018['single'])
++        self.dave_view.update_having_details_item(self.kiwoom_func_set.data_opw00018['multi'])
++
++    def handle_checkbox_update_balance(self):
++        if self.dave_view.checkBox.isChecked():
++            # Check Balance Update Request Every 12 Seconds
++            self.BalanceTimer = QTimer(self)
++            self.BalanceTimer.start(1000 * 12)
++            self.BalanceTimer.timeout.connect(self.handle_button_check_balance)
++        else:
++            # Stop Balance Update Every 12 Seconds
++            self.BalanceTimer.stop()
++
++    def handle_button_execute_all_orders(self):
++        row_list = self.select_all_db()
++        self.execute_order(row_list)
++
++    def handle_button_check_order(self):
++        self.dave_view.init_order_table()
++        self.request_get_ordered_list()
++        self.dave_view.update_ordered_list(self.kiwoom_func_set.order_data)
++
++    def handle_table_changed_item(self, item):
++        if item.column() == 1:
++            self.add_code_name(item.row(), item.column())
++        elif item.column() == 3:
++            self.add_price(item.row(), item.column())
++        elif 3 < item.column() < 15:
++            self.update_order_plan_details(item.row(), item.column())
++
++if __name__ == "__main__":
++    app = QApplication(sys.argv)
++    daveui = DaveMain()
++    daveui.execute_main()
++    sys.exit(app.exec_())
+Index: pytrader.py
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- pytrader.py	(revision )
++++ pytrader.py	(revision )
+@@ -0,0 +1,181 @@
++# -*-coding: utf-8 -*-
++import sqlite3
++import sys
++from datetime import date
++from PyQt4.QtGui import *
++from PyQt4.QtCore import *
++from PyQt4 import uic
++from davetrader import *
++
++class DaveView(QMainWindow, uic.loadUiType("Cultivator.ui")[0]):
++    def __init__(self):
++        super().__init__()
++        self.setupUi(self)
++        self.dave_trader = DaveMain.instance()
++
++    def update_statusbar_message(self, message):
++        self.statusbar.showMessage(message)
++
++    def update_combobox_accounts(self, accounts_list):
++        self.comboBox.addItems(accounts_list)
++
++    def set_signal_connection(self):
++        self.ButtonBalanceReq.clicked.connect(self.handle_button_check_balance)
++        self.CheckBoxBalanceUpdate.stateChanged.connect(self.handle_checkbox_update_balance)
++        self.ButtonOrder.clicked.connect(self.handle_button_execute_all_orders)
++        self.ButtonCheckOrder.clicked.connect(self.handle_button_check_order)
++        self.RequestTable.itemChanged.connect(self.handle_table_changed_item)
++
++    def handle_button_add_clicked(self):
++        self.dave_trader.handle_button_add_clicked()
++
++    def handle_button_check_order(self):
++        self.dave_trader.handle_button_check_order()
++
++    def handle_button_execute_all_orders(self):
++        self.dave_trader.handle_button_execute_all_orders()
++
++    def handle_checkbox_update_balance(self):
++        self.dave_trader.handle_checkbox_update_balance()
++
++    def handle_button_check_balance(self):
++        self.dave_trader.handle_button_check_balance()
++
++    def handle_button_remove_clicked(self):
++        self.dave_trader.handle_button_remove_clicked(self.sender())
++
++    def handle_button_execute_order_clicked(self):
++        self.dave_trader.handle_button_execute_order_clicked(self.sender())
++
++    def handle_button_cancel_order_clicked(self):
++        self.dave_trader.handle_button_cancel_order_clicked(self.sender())
++
++    def handle_table_changed_item(self, item):
++        self.dave_trader.handle_table_changed_item(item)
++
++    def show_message_box(self, title, message):
++        QMessageBox.about(self, title, message)
++
++    def update_selected_list(self, row_list):
++        self.RequestTable.setRowCount(len(row_list) + 1)
++        self.RequestTable.horizontalHeader().setResizeMode(0, QHeaderView.Stretch)
++        self.init_plan_list()
++        self.set_list(row_list)
++        self.set_add_row(row_list)
++        self.RequestTable.resizeRowsToContents()
++
++    def init_plan_list(self):
++        # Set Table Header
++        self.RequestTable.setColumnCount(17)
++        column_headers = ['종목명', '종목코드', '현가격',
++                          '1차매수가', '1차매수량', '2차매수가', '2차매수량', '3차매수가', '3차매수량',
++                          '4차매수가', '4차매수량', '1차매도가', '1차매도비율(%)', '2차매도가', '2차매도비율(%)', '주문', '종목관리']
++        self.RequestTable.setHorizontalHeaderLabels(column_headers)
++        for i in range(17):
++            self.RequestTable.setColumnWidth(i, 70)
++        self.RequestTable.setColumnWidth(0, 120)
++        self.RequestTable.setColumnWidth(1, 60)
++        self.RequestTable.setColumnWidth(2, 110)
++        self.RequestTable.setColumnWidth(12, 95)
++        self.RequestTable.setColumnWidth(14, 95)
++
++    def set_column_item(self, table_object, item_data, row_num, col_num, item_enabled, item_bold, item_color):
++        item = QTableWidgetItem(item_data)
++        item.setTextAlignment(Qt.AlignVCenter | Qt.AlignCenter)
++        if (item_bold):
++            curr_price_set_font = QFont()
++            curr_price_set_font.setBold(True)
++            item.setFont(curr_price_set_font)
++        if (item_color):
++            item.setTextColor(QColor(item_color))
++        table_object.setItem(row_num, col_num, item)
++        if (item_enabled):
++            table_object.item(row_num, col_num).setFlags(Qt.ItemIsEnabled)
++            table_object.item(row_num, col_num).setBackground(QColor('#ECEFF1'))
++        else:
++            table_object.item(row_num, col_num).setBackground(QColor('#FFF9C4'))
++
++    def set_list(self, row_list):
++        for j, ListRecords in enumerate(row_list):
++            for col_num in range(0, 2):
++                self.set_column_item(self.RequestTable, ListRecords[col_num], j, col_num, True, False, "")
++
++            for col_num in range(3, 15):
++                self.set_column_item(self.RequestTable, str(ListRecords[col_num - 1]), j, col_num, False, False, "")
++
++            self.button_order_list = QPushButton('주문')
++            self.button_order_list.clicked.connect(self.dave_trader.handle_button_execute_order_clicked)
++            self.RequestTable.setCellWidget(j, 15, self.button_order_list)
++
++            self.button_remove_list = QPushButton('제외')
++            self.button_remove_list.clicked.connect(self.dave_trader.handle_button_remove_clicked)
++            self.RequestTable.setCellWidget(j, 16, self.button_remove_list)
++
++    def set_add_row(self, row_list):
++        for col_num in range(0, 16):
++            self.set_column_item(self.RequestTable, "", len(row_list), col_num, True, False, "")
++
++        self.set_column_item(self.RequestTable, "", len(row_list), 1, False, False, "")
++
++        self.button_add_list = QPushButton('추가')
++        self.button_add_list.clicked.connect(self.dave_trader.handle_button_add_clicked)
++        self.RequestTable.setCellWidget(len(row_list), 16, self.button_add_list)
++
++    def init_order_table(self):
++        self.OrderTable.setColumnCount(7)
++        column_headers = ['종목명', '종목코드', '주문가격', '체결량', '미체결량', '주문번호', '주문취소']
++        self.OrderTable.setHorizontalHeaderLabels(column_headers)
++        self.OrderTable.setColumnWidth(0, 120)
++        for col_num in range(1, 7):
++            self.OrderTable.setColumnWidth(col_num, 70)
++        self.OrderTable.setColumnWidth(2, 80)
++
++    def update_code_name(self, code_name, row_num):
++        self.set_column_item(self.RequestTable, code_name, row_num, 0, True, False, "")
++
++    def update_ordered_list(self, order_data):
++        item_count = len(order_data)
++        self.OrderTable.setRowCount(item_count)
++        for j in range(item_count):
++            row = order_data[j]
++            for i in range(len(row)):
++                item = QTableWidgetItem(row[i])
++                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignCenter)
++                self.OrderTable.setItem(j, i, item)
++            self.button_cancel_order = QPushButton('주문취소')
++            if int(row[4]) == 0:
++                self.button_cancel_order.setEnabled(False)
++            else:
++                self.button_cancel_order.clicked.connect(self.dave_trader.handle_button_cancel_order_clicked)
++            self.OrderTable.setCellWidget(j, 6, self.button_cancel_order)
++        self.OrderTable.resizeRowsToContents()
++
++    def update_estimated_balance_item(self, estimated_balance_data):
++        # balance
++        item = QTableWidgetItem(estimated_balance_data)
++        item.setTextAlignment(Qt.AlignVCenter | Qt.AlignCenter)
++        self.tableWidget.setItem(0, 0, item)
++
++    def update_balance_details_item(self, balance_detail_data):
++        for i in range(1, 6):
++            item = QTableWidgetItem(balance_detail_data[i - 1])
++            item.setTextAlignment(Qt.AlignVCenter | Qt.AlignCenter)
++            self.tableWidget.setItem(0, i, item)
++        self.tableWidget.resizeRowsToContents()
++
++    def update_having_details_item(self, having_detail_data):
++        item_count = len(having_detail_data)
++        self.tableWidget_2.setRowCount(item_count)
++        for j in range(item_count):
++            row = having_detail_data[j]
++            for i in range(len(row)):
++                item = QTableWidgetItem(row[i])
++                item.setTextAlignment(Qt.AlignVCenter | Qt.AlignCenter)
++                self.tableWidget_2.setItem(j, i, item)
++        self.tableWidget_2.resizeRowsToContents()
++
++if __name__ == "__main__":
++    app = QApplication(sys.argv)
++    daveui = DaveView()
++    daveui.show()
++    app.exec_()
+Index: .idea/vcs.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- .idea/vcs.xml	(revision )
++++ .idea/vcs.xml	(revision )
+@@ -0,0 +1,6 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project version="4">
++  <component name="VcsDirectoryMappings">
++    <mapping directory="$PROJECT_DIR$" vcs="Git" />
++  </component>
++</project>
+\ No newline at end of file
+Index: .idea/dictionaries/jhlee.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- .idea/dictionaries/jhlee.xml	(revision )
++++ .idea/dictionaries/jhlee.xml	(revision )
+@@ -0,0 +1,7 @@
++<component name="ProjectDictionaryState">
++  <dictionary name="jhlee">
++    <words>
++      <w>kiwoom</w>
++    </words>
++  </dictionary>
++</component>
+\ No newline at end of file
